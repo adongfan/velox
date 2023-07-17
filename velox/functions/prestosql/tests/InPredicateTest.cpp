@@ -344,6 +344,64 @@ TEST_F(InPredicateTest, date) {
           input));
 }
 
+TEST_F(InPredicateTest, double) {
+  const vector_size_t size = 1'000;
+  auto vector =
+      makeFlatVector<double>(size, [](auto row) { return row % 17 * 1.0; });
+  auto vectorWithNulls = makeFlatVector<double>(
+      size, [](auto row) { return row % 17 * 1.0; }, nullEvery(7));
+  auto rowVector = makeRowVector({vector, vectorWithNulls});
+
+  // no nulls
+  auto result =
+      evaluate<SimpleVector<bool>>("c0 IN (1.0, 3.0, 5.0)", rowVector);
+  auto expected = makeFlatVector<bool>(size, [](auto row) {
+    auto n = row % 17 * 1.0;
+    return n == 1.0 || n == 3.0 || n == 5.0;
+  });
+  assertEqualVectors(expected, result);
+
+  // some nulls
+  result = evaluate<SimpleVector<bool>>("c1 IN (3.0, 5.0, 9.0)", rowVector);
+  expected = makeFlatVector<bool>(
+      size,
+      [](auto row) {
+        auto n = row % 17 * 1.0;
+        return n == 3.0 || n == 5.0 || n == 9.0;
+      },
+      nullEvery(7));
+  assertEqualVectors(expected, result);
+
+  // null values in the in-list
+  // The results can be either true or null, but not false.
+  result =
+      evaluate<SimpleVector<bool>>("c0 IN (1.0, 3.0, null, 5.0)", rowVector);
+  expected = makeFlatVector<bool>(
+      size,
+      [](auto /* row */) { return true; },
+      [](auto row) {
+        auto n = row % 17 * 1.0;
+        return !(n == 1.0 || n == 3.0 || n == 5.0);
+      });
+  assertEqualVectors(expected, result);
+  result =
+      evaluate<SimpleVector<bool>>("c1 IN (3.0, 5.0, null, 9.0)", rowVector);
+  expected = makeFlatVector<bool>(
+      size,
+      [](auto /* row */) { return true; },
+      [](auto row) {
+        auto n = row % 17 * 1.0;
+        return row % 7 == 0 || !(n == 3.0 || n == 5.0 || n == 9.0);
+      });
+  assertEqualVectors(expected, result);
+
+  // an in list with nulls only is always null.
+  result = evaluate<SimpleVector<bool>>("c0 IN (null)", rowVector);
+  auto expectedConstant =
+      BaseVector::createNullConstant(BOOLEAN(), size, pool_.get());
+  assertEqualVectors(expectedConstant, result);
+}
+
 TEST_F(InPredicateTest, reusableResult) {
   std::string predicate = "c0 IN (1, 2)";
   auto input = makeRowVector({makeNullableFlatVector<int32_t>({0, 1, 2, 3})});

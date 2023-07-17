@@ -113,6 +113,31 @@ std::pair<std::unique_ptr<common::Filter>, bool> createBytesValuesFilter(
   return {std::make_unique<common::BytesValues>(values, nullAllowed), false};
 }
 
+std::pair<std::unique_ptr<common::Filter>, bool> createDoubleValuesFilter(
+    const std::vector<exec::VectorFunctionArg>& inputArgs) {
+  auto valuesPair = toValues<double, double>(inputArgs);
+  if (!valuesPair.has_value()) {
+    return {nullptr, false};
+  }
+  const auto& values = valuesPair.value().first;
+  bool nullAllowed = valuesPair.value().second;
+
+  if (values.empty() && nullAllowed) {
+    return {nullptr, true};
+  }
+  VELOX_USER_CHECK(
+      !values.empty(),
+      "IN predicate expects at least one non-null value in the in-list");
+  if (values.size() == 1) {
+    return {
+        std::make_unique<common::DoubleRange>(
+            values[0], false, false, values[0], false, false, nullAllowed),
+        false};
+  }
+
+  return {std::make_unique<common::DoubleValues>(values, nullAllowed), false};
+}
+
 class InPredicate : public exec::VectorFunction {
  public:
   explicit InPredicate(std::unique_ptr<common::Filter> filter, bool alwaysNull)
@@ -139,6 +164,9 @@ class InPredicate : public exec::VectorFunction {
         break;
       case TypeKind::TINYINT:
         filter = createBigintValuesFilter<int8_t>(inputArgs);
+        break;
+      case TypeKind::DOUBLE:
+        filter = createDoubleValuesFilter(inputArgs);
         break;
       case TypeKind::VARCHAR:
       case TypeKind::VARBINARY:
@@ -190,6 +218,11 @@ class InPredicate : public exec::VectorFunction {
           return filter_->testInt64(value);
         });
         break;
+      case TypeKind::DOUBLE:
+        applyTyped<double>(rows, input, context, result, [&](double value) {
+          return filter_->testDouble(value);
+        });
+        break;
       case TypeKind::VARCHAR:
       case TypeKind::VARBINARY:
         applyTyped<StringView>(
@@ -214,6 +247,7 @@ class InPredicate : public exec::VectorFunction {
           "bigint",
           "varchar",
           "varbinary",
+          "double",
           "date"}) {
       signatures.emplace_back(exec::FunctionSignatureBuilder()
                                   .returnType("boolean")

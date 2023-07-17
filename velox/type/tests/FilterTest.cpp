@@ -710,6 +710,37 @@ TEST(FilterTest, floatRange) {
       << "able to create a FloatRange with NaN";
 }
 
+TEST(FilterTest, doubleValues) {
+  auto filter = doubleValues({-100.0, 0, 2.3, 9.99999});
+  EXPECT_TRUE(filter->testDouble(2.3));
+  EXPECT_TRUE(filter->testDouble(2.300));
+  EXPECT_TRUE(filter->testDouble(0));
+  EXPECT_TRUE(filter->testDouble(-100));
+  EXPECT_FALSE(filter->testDouble(9.99));
+  EXPECT_FALSE(filter->testDouble(99999));
+  EXPECT_FALSE(filter->testDouble(2.333));
+  {
+    auto verify = [&](double x) { return filter->testDouble(x); };
+    double n4[] = {1.0, std::nan("nan"), 2.30, 9.99999};
+    checkSimd(filter.get(), n4, verify);
+  }
+}
+
+TEST(FilterTest, floatValues) {
+  auto filter = floatValues({-100.0f, 0, 2.3f, 9.99999f});
+  EXPECT_TRUE(filter->testFloat(2.3f));
+  EXPECT_TRUE(filter->testFloat(0));
+  EXPECT_FALSE(filter->testFloat(9.99f));
+  EXPECT_TRUE(filter->testFloat(9.99999f));
+  EXPECT_FALSE(filter->testFloat(9.999999999f));
+  {
+    auto verify = [&](float x) { return filter->testFloat(x); };
+    float n8[] = {1.0, std::nanf("nan"), 2.3f, 3.1, -1e20, 0, 1.1, 1.2};
+    checkSimd(filter.get(), n8, verify);
+  }
+}
+
+
 TEST(FilterTest, bytesRange) {
   {
     auto filter = equal("abc");

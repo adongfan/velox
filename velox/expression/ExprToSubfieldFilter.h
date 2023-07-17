@@ -121,6 +121,12 @@ betweenDouble(double min, double max, bool nullAllowed = false) {
       min, false, false, max, false, false, nullAllowed);
 }
 
+inline std::unique_ptr<common::DoubleValues> doubleValues(
+    std::vector<double> values,
+    bool nullAllowed = false) {
+  return std::make_unique<common::DoubleValues>(values, nullAllowed);
+}
+
 inline std::unique_ptr<common::FloatRange> lessThanFloat(
     float max,
     bool nullAllowed = false) {
@@ -177,6 +183,12 @@ inline std::unique_ptr<common::FloatRange>
 betweenFloat(float min, float max, bool nullAllowed = false) {
   return std::make_unique<common::FloatRange>(
       min, false, false, max, false, false, nullAllowed);
+}
+
+inline std::unique_ptr<common::FloatValues> floatValues(
+    std::vector<float> values,
+    bool nullAllowed = false) {
+  return std::make_unique<common::FloatValues>(values, nullAllowed);
 }
 
 inline std::unique_ptr<common::BigintRange>

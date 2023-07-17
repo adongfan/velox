@@ -88,6 +88,12 @@ std::string Filter::toString() const {
     case FilterKind::kHugeintRange:
       strKind = "HugeintRange";
       break;
+    case FilterKind::kDoubleValues:
+      strKind = "DoubleValues";
+      break;
+    case FilterKind::kFloatValues:
+      strKind = "FloatValues";
+      break;
   };
 
   return fmt::format(
@@ -122,6 +128,8 @@ std::unordered_map<FilterKind, std::string> filterKindNames() {
       {FilterKind::kBigintMultiRange, "kBigintMultiRange"},
       {FilterKind::kMultiRange, "kMultiRange"},
       {FilterKind::kHugeintRange, "kHugeintRange"},
+      {FilterKind::kDoubleValues, "kDoubleValues"},
+      {FilterKind::kFloatValues, "kFloatValues"},
   };
 }
 
@@ -174,6 +182,8 @@ void Filter::registerSerDe() {
   registry.Register("BigintMultiRange", BigintMultiRange::create);
   registry.Register("NegatedBytesValues", NegatedBytesValues::create);
   registry.Register("MultiRange", MultiRange::create);
+  registry.Register("DoubleValues", FloatingPointValues<double>::create);
+  registry.Register("FloatValues", FloatingPointValues<float>::create);
 }
 
 folly::dynamic Filter::serializeBase(std::string_view name) const {

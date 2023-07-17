@@ -54,6 +54,8 @@ enum class FilterKind {
   kBigintMultiRange,
   kMultiRange,
   kHugeintRange,
+  kDoubleValues,
+  kFloatValues,
 };
 
 class Filter;
@@ -1896,6 +1898,176 @@ class MultiRange final : public Filter {
   const std::vector<std::unique_ptr<Filter>> filters_;
   const bool nanAllowed_;
 };
+
+/// IN-list filter for floating data type.
+template <typename T>
+class FloatingPointValues final : public Filter {
+ public:
+  FloatingPointValues(const std::vector<T>& values, bool nullAllowed)
+      : Filter(
+            true,
+            nullAllowed,
+            (std::is_same_v<T, double>) ? FilterKind::kDoubleValues
+                                        : FilterKind::kFloatValues) {
+    VELOX_CHECK(!values.empty(), "values must not be empty");
+
+    for (const auto& value : values) {
+      values_.insert(value);
+    }
+
+    lower_ = *std::min_element(values_.begin(), values_.end());
+    upper_ = *std::max_element(values_.begin(), values_.end());
+    kind_ = (std::is_same_v<T, double>) ? FilterKind::kDoubleValues
+                                        : FilterKind::kFloatValues;
+  }
+
+  FloatingPointValues(const FloatingPointValues& other, bool nullAllowed)
+      : Filter(true, nullAllowed, other.kind_),
+        lower_(other.lower_),
+        upper_(other.upper_),
+        kind_(other.kind_),
+        values_(other.values_) {}
+
+  std::unique_ptr<Filter> clone(
+      std::optional<bool> nullAllowed = std::nullopt) const final {
+    if (nullAllowed) {
+      return std::make_unique<FloatingPointValues>(*this, nullAllowed.value());
+    } else {
+      return std::make_unique<FloatingPointValues>(*this);
+    }
+  }
+
+  bool testDouble(double value) const final {
+    return testFloatingPoint(value);
+  }
+
+  bool testFloat(float value) const final {
+    return testFloatingPoint(value);
+  }
+
+  bool testingEquals(const Filter& other) const final {
+    auto otherFloatingPointValues = dynamic_cast<const FloatingPointValues<T>*>(&other);
+    auto res = otherFloatingPointValues != nullptr && Filter::testingBaseEquals(other) &&
+        lower_ == otherFloatingPointValues->lower_ &&
+        upper_ == otherFloatingPointValues->upper_ &&
+        values_.size() == otherFloatingPointValues->values_.size();
+    if (!res) {
+      return false;
+    }
+
+    for (const auto& v : values_) {
+      if (!otherFloatingPointValues->values_.contains(v)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  folly::dynamic serialize() const override {
+    auto obj = Filter::serializeBase((std::is_same_v<T, double>) ? "DoubleValues" : "FloatValues");
+    folly::dynamic values = folly::dynamic::array;
+    for (auto v : values_) {
+      values.push_back(v);
+    }
+    obj["values"] = values;
+    return obj;
+  }
+
+  static FilterPtr create(const folly::dynamic& obj) {
+    auto nullAllowed = obj["nullAllowed"].asBool();
+    auto arr = obj["values"];
+    std::vector<T> values;
+    values.reserve(arr.size());
+
+    for (const auto& v : arr) {
+      values.emplace_back((std::is_same_v<T, double>) ? v.asDouble() : static_cast<float>(v.asDouble()));
+    }
+
+    return std::make_unique<FloatingPointValues<T>>(values, nullAllowed);
+  }
+
+  std::unique_ptr<Filter> mergeWith(const Filter* other) const final {
+    switch (other->kind()) {
+      case FilterKind::kAlwaysTrue:
+      case FilterKind::kAlwaysFalse:
+      case FilterKind::kIsNull:
+        return other->mergeWith(this);
+      case FilterKind::kIsNotNull:
+        return this->clone(false);
+      case FilterKind::kDoubleRange:
+      case FilterKind::kFloatRange: {
+        bool bothNullAllowed = nullAllowed_ && other->testNull();
+        auto otherFloatingValues =
+            static_cast<const FloatingPointValues<T>*>(other);
+        const FloatingPointValues<T>* smallerFilter = this;
+        const FloatingPointValues<T>* largerFilter = otherFloatingValues;
+        if (this->values().size() > otherFloatingValues->values().size()) {
+          smallerFilter = otherFloatingValues;
+          largerFilter = this;
+        }
+        std::vector<T> newValues;
+        newValues.reserve(smallerFilter->values().size());
+
+        for (const auto& value : smallerFilter->values()) {
+          if (largerFilter->values_.contains(value)) {
+            newValues.emplace_back(value);
+          }
+        }
+        if (newValues.empty()) {
+          if (bothNullAllowed) {
+            return std::make_unique<IsNull>();
+          }
+          return std::make_unique<AlwaysFalse>();
+        }
+
+        return std::make_unique<FloatingPointValues<T>>(
+            std::move(newValues), bothNullAllowed);
+      }
+      default:
+        VELOX_UNREACHABLE();
+    }
+  }
+
+  const folly::F14FastSet<T>& values() const {
+    return values_;
+  }
+
+  std::string toString() const final;
+
+ private:
+  T lower_;
+  T upper_;
+  FilterKind kind_;
+  folly::F14FastSet<T> values_;
+
+  bool testFloatingPoint(T value) const {
+    return value >= lower_ && value <= upper_ && values_.contains(value);
+  }
+
+  std::string toString(const std::string& name) const {
+    return fmt::format(
+        "{} range: {} ~ {}, size:{} {}",
+        name,
+        std::to_string(lower_),
+        std::to_string(upper_),
+        values_.size(),
+        nullAllowed_ ? "with nulls" : "no nulls");
+  }
+};
+
+template <>
+inline std::string FloatingPointValues<double>::toString() const {
+  return toString("DoubleValues");
+}
+
+template <>
+inline std::string FloatingPointValues<float>::toString() const {
+  return toString("FloatValues");
+}
+
+using DoubleValues = FloatingPointValues<double>;
+using FloatValues = FloatingPointValues<float>;
 
 // Helper for applying filters to different types
 template <typename TFilter, typename T>
